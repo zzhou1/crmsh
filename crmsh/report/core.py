@@ -46,6 +46,7 @@ class Context:
         self.pcmk_lib_dir: str
         self.pcmk_exec_dir: str
         self.cores_dir_list: List[str]
+        self.trace_dir_list: List[str]
         self.dest: str
         self.dest_dir: str
         self.work_dir: str
@@ -247,13 +248,7 @@ def collect_for_nodes(context: Context) -> None:
         p.join()
 
 
-def start_collector(node: str, context: Context) -> None:
-    """
-    Start collector at specific node
-    """
-    cmd = f"{constants.BIN_COLLECTOR} '{context}'"
-    err = ""
-
+def _get_rc_stdout_stderr(node: str, context: Context, cmd: str):
     if node == context.me:
         code, out, err = ShellUtils().get_stdout_stderr(cmd)
     else:
@@ -261,6 +256,17 @@ def start_collector(node: str, context: Context) -> None:
         cmd = cmd.replace('"', '\\"')
         cmd = f'{crmutils.get_ssh_agent_str()} ssh {constants.SSH_OPTS} {node} "{context.sudo} {cmd}"'
         code, out, err = sh.LocalShell().get_rc_stdout_stderr(context.ssh_user, cmd)
+    return(code, out, err)
+
+
+def start_collector(node: str, context: Context) -> None:
+    """
+    Start collector at specific node
+    """
+    cmd = f"{constants.BIN_COLLECTOR} '{context}'"
+    err = ""
+
+    code, out, err = _get_rc_stdout_stderr(node, context, cmd)
 
     if code != 0:
         logger.warning(err)
@@ -441,6 +447,14 @@ def load_context_attributes(context: Context) -> None:
     context.cores_dir_list.extend([constants.COROSYNC_LIB] if os.path.isdir(constants.COROSYNC_LIB) else [])
 
 
+def load_context_trace_dir_list(context: Context) -> None:
+    log_contents = ""
+    cmd = f"grep 'INFO: Trace for .* is written to ' {log.CRMSH_LOG_FILE}*|grep -v 'collect'"
+    for node in context.node_list:
+        log_contents += _get_rc_stdout_stderr(node, context, cmd)[1] + "\n"
+    context.trace_dir_list = list(set(re.findall("written to (.*)/.*", log_contents))) 
+
+
 def adjust_verbosity(context: Context) -> None:
     if context.debug > 0:
         config.report.verbosity = context.debug
@@ -490,6 +504,7 @@ def run_impl() -> None:
         push_data(ctx)
     else:
         find_ssh_user(ctx)
+        load_context_trace_dir_list(ctx)
         collect_for_nodes(ctx)
         process_results(ctx)
 
